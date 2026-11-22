@@ -1023,6 +1023,23 @@ def rerender(jid: str, cid: str, body: dict = Body(...)):
     return jobs.public(job)
 
 
+@app.post("/api/jobs/{jid}/clips/re-render-all")
+def rerender_all(jid: str):
+    job = _job_or_404(jid)
+    if job["status"] in ("queued", "running", "stopping") or job.get("stop"):
+        raise HTTPException(409, "This video is still being worked on.")
+    failed = [c for c in job["clips"] if c.get("status") == "error"]
+    if not failed:
+        raise HTTPException(400, "No failed clips to re-process.")
+    _throttle("render-all:" + ctx.uid(), 10, 600, "That's a lot of re-makes. Wait a few minutes.")
+    for clip in failed:
+        try:
+            jobs.request_render(jid, clip["id"], {})
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e))
+    return jobs.public(job)
+
+
 def _clip_or_404(jid: str, cid: str):
     job = _job_or_404(jid)
     clip = next((c for c in job["clips"] if c["id"] == cid), None)
