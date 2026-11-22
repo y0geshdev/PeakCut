@@ -12,7 +12,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import brain, config, creators, ctx, facecam, fetch_model, games, hashtags, load, media, quality, render, roman, safe, transcribe, usage
+from . import brain, config, creators, ctx, facecam, fetch_model, games, hashtags, load, logos, media, quality, render, roman, safe, transcribe, usage
 
 class _FairQueue:
     """Whose video is next. Each person has their own line and the lines take turns, so someone who adds ten
@@ -110,7 +110,7 @@ on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first f
 
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
             "range_start": None, "range_end": None, "captions": True, "hook_text": "", "description_text": "",
-            "lang": "en"}   # lang: the language spoken
+            "logo": None, "lang": "en"}   # lang: the language spoken
 
 
 LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
@@ -120,6 +120,9 @@ def clean_options(options) -> dict:
     """Only known settings, each inside its allowed range. Raises ValueError on nonsense."""
     out = {}
     for k, v in (options if isinstance(options, dict) else {}).items():
+        if k == "logo":
+            out[k] = logos.clean(v)
+            continue
         if k == "captions":
             if not isinstance(v, bool):
                 raise ValueError("Captions must be on or off.")
@@ -315,7 +318,7 @@ def create(source: dict, options: dict, enqueue=True, creator=None, kind="video"
     c = creators.get(creator) if creator else None
     if c:
         d = creators.root(c["id"]) / ("live" if kind == "live" else "videos") / jid
-        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions", "lang") if k in c},
+        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions", "logo", "lang") if k in c},
                 "hook_text": creators.clean_hook(c.get("hook_text")),
                 "description_text": creators.clean_description(c.get("description_text"))}
     else:
@@ -375,6 +378,8 @@ def request_render(jid, cid, changes: dict):
     job = _jobs[jid]
     clip = next(c for c in job["clips"] if c["id"] == cid)
     new = dict(clip)
+    if "logo" in changes:
+        new.update(clean_options({"logo": changes["logo"]}))
     if "captions" in changes:
         new.update(clean_options({"captions": changes["captions"]}))
     for k in ("start", "end"):
@@ -456,6 +461,7 @@ def render_one(job, clip, words):
     clip["status"] = "rendering"
     save(job)
     try:
+        clip.setdefault("logo", job.get("options", {}).get("logo"))
         if not clip.get("src") and not job.get("source_path"):
             _piece_again(job, clip)
         off = clip.get("src_offset", 0.0)
@@ -857,7 +863,7 @@ def _run_job(job):
         for c in found:
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
-                     captions=o.get("captions", True), status="queued", version=0)
+                     captions=o.get("captions", True), logo=o.get("logo"), status="queued", version=0)
             if o.get("hook_text"):        # the person's own big text, on every clip, in place of the AI's
                 c["hook"] = o["hook_text"]
             if o.get("description_text"):  # ...and their own description, exactly as written

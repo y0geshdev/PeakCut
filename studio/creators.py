@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, ctx
+from . import config, ctx, logos
 
 
 def _root() -> Path:
@@ -21,7 +21,7 @@ DEFAULTS = {"name": "", "channel": "", "style": "bounce", "layout": "blur", "cap
             "trigger_words": "clip that, clip it",
             "autopost": False, "accounts": [], "post_min_score": 75, "post_gap_min": 45, "daily_cap": 6,
             "privacy": "public", "post_footer": "", "rate_per_1k": 0.0, "channels": {},
-            "lang": "en"}    # the language this creator speaks: picks the speech model, for live recordings too
+            "logo": None, "lang": "en"}    # the language this creator speaks: picks the speech model, for live recordings too
 PLATFORMS = ("youtube", "twitch", "kick")
 
 
@@ -70,6 +70,10 @@ def root(cid) -> Path:
 def _clean(data: dict) -> dict:
     out = {}
     for k in DEFAULTS:
+        if k == "logo":
+            if k in data:
+                out[k] = logos.clean(data[k])
+            continue
         if k == "captions":
             if k in data:
                 if not isinstance(data[k], bool):

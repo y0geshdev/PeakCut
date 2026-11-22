@@ -633,7 +633,8 @@ class Session:
     def _add_clip(self, c):
         self.n += 1
         c.update(id=f"clip{self.n:03d}", style=self.settings["style"], layout=self.settings["layout"],
-                 captions=self.job["options"].get("captions", True), status="queued", version=0, made_at=time.time())
+                 captions=self.job["options"].get("captions", True), logo=self.settings.get("logo"),
+                 status="queued", version=0, made_at=time.time())
         if self.job["options"].get("hook_text"):      # the person's own big text, in place of the AI's
             c["hook"] = self.job["options"]["hook_text"]
         if self.job["options"].get("description_text"):

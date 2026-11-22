@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from . import admin as admins
 from . import account, load
-from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
+from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, logos, media, posting,
                profiles, render, safe, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
@@ -105,6 +105,8 @@ class Gate:
             piece = method == "PUT" and path.startswith("/api/upload/")
             cap = ((min(config.MAX_UPLOAD_MB, config.UPLOAD_PART_MB) if piece else config.MAX_UPLOAD_MB) + 8) * 1024 * 1024 \
                 if path == "/api/upload" or piece else 256 * 1024
+            if path == "/api/logos":
+                cap = logos.MAX_BYTES + 64 * 1024
             try:
                 if int(req.headers.get("content-length") or 0) > cap:
                     return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path == "/api/upload" else "That request is too large.")
@@ -1137,6 +1139,30 @@ def media_file(jid: str, name: str, download: int = 0):
 
 
 # ================================================================ creators and live recording
+@app.post("/api/logos")
+def upload_logo(file: UploadFile = File(...)):
+    _need_verified()
+    _throttle("logo:" + ctx.uid(), 20, 600, "That's a lot of logos. Wait a few minutes.")
+    _quota()
+    try:
+        return logos.upload(file.file.read(logos.MAX_BYTES + 1))
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    finally:
+        file.file.close()
+
+
+@app.get("/api/logos/{lid}")
+def logo_image(lid: str):
+    try:
+        image = logos.path(lid)
+    except ValueError:
+        raise HTTPException(404, "No such logo")
+    if not image.is_file():
+        raise HTTPException(404, "No such logo")
+    return FileResponse(image, media_type="image/png", headers={"Cache-Control": "private, no-store"})
+
+
 def _channel_ok(body: dict):
     links = [str(body.get("channel") or "").strip()]
     chs = body.get("channels")

@@ -1591,7 +1591,13 @@ function onLink(input) {
   linkTimer = setTimeout(() => { if (input.value.trim() === u) takeLink(A, u, input); }, 900);   // other link shapes: take it once typing stops
 }
 document.addEventListener("input", e => { if (e.target.id === "url") onLink(e.target);
-  if (e.target.closest?.("#cform") && e.target.dataset.k && !/checkbox|radio/.test(e.target.type)) dirty(true); });
+  if (e.target.closest?.("#cform") && (e.target.dataset.k || e.target.closest("[data-logo]")) && !/checkbox|radio/.test(e.target.type)) dirty(true);
+  if (e.target.hasAttribute("data-logo-value")) {
+    const box = e.target.closest("[data-logo]");
+    if (e.target.dataset.logoValue !== "width") box.querySelector("[data-logo-position]").value = "custom";
+    previewLogo(box);
+  }
+});
 document.addEventListener("keydown", e => { if (e.target.id === "url" && e.key === "Enter" && e.target.value.trim() && looksLink(e.target.value.trim())) { e.preventDefault(); clearTimeout(linkTimer); takeLink(att(), e.target.value.trim(), e.target); } });
 document.addEventListener("click", e => {
   const r = e.target.closest("[data-rm]"), A = att(); if (!r || A.busy) return;
@@ -1912,6 +1918,7 @@ function drawCreatorForm() {
         <label class="f span">Big text on every clip<input data-k="hook_text" maxlength="60" value="${esc(c.hook_text || "")}" placeholder="Left empty, the AI writes a different one for each clip"><small class="sub" style="font-weight:400">For a campaign that asks for a set line on every clip. It is shown exactly as typed.</small></label>
         <label class="f span">Description for every clip<textarea data-k="description_text" rows="3" maxlength="2000" placeholder="Left empty, the AI writes a different one for each clip">${esc(c.description_text || "")}</textarea><small class="sub" style="font-weight:400">Written once, used as the description of every clip of this creator, exactly as typed. It is posted as it is, without the AI's hashtags.</small></label>
         <label class="f">Minutes of live stream to keep<input data-k="buffer_min" type="number" value="${c.buffer_min}"></label></div></div>
+    <div class="card"><h2>Logo</h2><p class="help">Added to new video and live clips. Existing clips keep their own settings; change those in the clip editor.</p>${logoFields(c.logo)}</div>
     <div class="card"><h2>Posting</h2><p class="help">${A.length ? "Choose the accounts this creator's clips go to. One account can be shared by several creators." : "No accounts are connected yet. Connect one in Settings, then come back."}</p>
       ${A.length ? `<div class="row" style="margin-bottom:16px">${A.map(a => `<label class="ck"><input type="checkbox" data-acc value="${esc(a.id)}" ${c.accounts.includes(a.id) ? "checked" : ""}>${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>` : `<button class="btn" data-act="go" data-v="settings" style="margin-bottom:16px">${ic("cog")}Open Settings</button>`}
       <div class="fields"><label class="sw span"><input type="checkbox" data-k="autopost" ${c.autopost ? "checked" : ""}><span>Post new clips automatically<small>Clips that score high enough go out without you approving them.</small></span></label>
@@ -1925,7 +1932,7 @@ function drawCreatorForm() {
       <button class="btn danger" data-act="delcreator">${ic("trash")}Delete creator</button></div>
     <div class="savebar" id="savebar"><span>${ic("warn")}You have unsaved changes</span><button class="btn ghost" data-act="cdiscard">Discard</button><button class="btn primary" data-act="csave">${ic("check")}Save changes</button></div>`;
 }
-const creatorForm = () => { const d = {}; $$("#cform [data-k]").forEach(i => { if (i.type === "radio") { if (i.checked) d[i.dataset.k] = i.value; } else d[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; }); d.accounts = $$("#cform [data-acc]:checked").map(i => i.value); return d; };
+const creatorForm = () => { const d = {}; $$("#cform [data-k]").forEach(i => { if (i.type === "radio") { if (i.checked) d[i.dataset.k] = i.value; } else d[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; }); d.accounts = $$("#cform [data-acc]:checked").map(i => i.value); d.logo = readLogo($("#cform [data-logo]")); return d; };
 const dirty = on => $("#savebar")?.classList.toggle("on", on);
 async function saveCreator(quiet) {
   try { await send(`/api/creators/${creatorId()}`, creatorForm(), "PUT"); dirty(false); if (!quiet) toast("Saved", "ok"); await tick(); return true; }
@@ -2206,6 +2213,40 @@ async function ytCookiesCard(logo) {
 async function saveSettings() { const d = {}; $$("#sform [data-s]").forEach(i => d[i.dataset.s] = i.value); await send("/api/settings", d, "PUT"); }
 
 /* ============================================================ clip editor */
+const LOGO_POSITIONS = {"top-left": [4, 4], "top-right": [96, 4], "bottom-left": [4, 96], "bottom-right": [96, 96]};
+function logoFields(value) {
+  const logo = value || {width: 15, x: 96, y: 4}, id = logo.id || "";
+  const preset = Object.keys(LOGO_POSITIONS).find(k => LOGO_POSITIONS[k][0] === logo.x && LOGO_POSITIONS[k][1] === logo.y) || "custom";
+  return `<div data-logo data-logo-id="${esc(id)}">
+    <label class="sw"><input type="checkbox" data-logo-enabled ${id ? "checked" : ""}>Add a logo</label>
+    <label class="f">Logo image<input type="file" data-logo-upload accept="image/png,image/jpeg,image/webp"><small class="help">Still PNG, JPEG or WebP, up to 5 MB. Use a transparent PNG to avoid a background.</small></label>
+    <div class="two"><label class="f">Width (% of video)<input data-logo-value="width" type="number" min="1" max="100" step="0.01" required value="${esc(logo.width)}"></label>
+      <label class="f">Position<select data-logo-position>${opts({"top-left":"Top left", "top-right":"Top right", "bottom-left":"Bottom left", "bottom-right":"Bottom right", custom:"Custom"}, preset)}</select></label></div>
+    <div class="two"><label class="f">Horizontal (0 left, 100 right)<input data-logo-value="x" type="number" min="0" max="100" step="0.01" required value="${esc(logo.x)}"></label>
+      <label class="f">Vertical (0 top, 100 bottom)<input data-logo-value="y" type="number" min="0" max="100" step="0.01" required value="${esc(logo.y)}"></label></div>
+    <div data-logo-preview style="position:relative;width:144px;aspect-ratio:9/16;border:1px solid var(--line);background:var(--bg);overflow:hidden;margin:12px 0" aria-label="Logo position preview">
+      <img data-logo-image ${id ? `src="/api/logos/${encodeURIComponent(id)}"` : ""} alt="Uploaded logo" ${id ? "" : "hidden"} style="position:absolute;width:${Number(logo.width)}%;left:${Number(logo.x)}%;top:${Number(logo.y)}%;transform:translate(${-Number(logo.x)}%,${-Number(logo.y)}%)"></div>
+    <p class="help">The logo keeps its shape and stays inside the video. Position is measured across the space left around it. Save and re-make a clip to see it on the finished video.</p>
+  </div>`;
+}
+function readLogo(box) {
+  if (box.dataset.uploading) throw new Error("Wait for the logo upload to finish.");
+  if (!box.querySelector("[data-logo-enabled]").checked) return null;
+  if (!box.dataset.logoId) throw new Error("Upload a logo first, or turn off Add a logo.");
+  const logo = {id: box.dataset.logoId};
+  box.querySelectorAll("[data-logo-value]").forEach(input => {
+    if (!input.checkValidity()) throw new Error("Choose a logo width from 1 to 100, and positions from 0 to 100.");
+    logo[input.dataset.logoValue] = Number(input.value);
+  });
+  return logo;
+}
+function previewLogo(box) {
+  const image = box.querySelector("[data-logo-image]");
+  image.hidden = !box.dataset.logoId || !box.querySelector("[data-logo-enabled]").checked;
+  const value = key => Number(box.querySelector(`[data-logo-value="${key}"]`).value);
+  image.style.width = value("width") + "%"; image.style.left = value("x") + "%"; image.style.top = value("y") + "%";
+  image.style.transform = `translate(${-value("x")}%,${-value("y")}%)`;
+}
 function openClip(jid, cid) { D.jid = jid; D.cid = cid; D.sig = ""; drawClipDlg(true); $("#clipdlg").showModal(); }
 function drawClipDlg(full) {
   const j = jobOf(D.jid), c = j?.clips.find(x => x.id === D.cid), dlg = $("#clipdlg");
@@ -2226,6 +2267,8 @@ function drawClipDlg(full) {
           <label class="f">Layout<select data-f="layout">${opts(S.status.layouts, c.layout)}</select></label></div>
         <div class="two"><label class="f">Start (seconds)<input data-f="start" type="number" step="0.5" value="${c.start}"></label>
           <label class="f">End (seconds)<input data-f="end" type="number" step="0.5" value="${c.end}"></label></div>
+        <h3>Logo</h3>${logoFields(c.logo === undefined ? j.options?.logo : c.logo)}
+        ${j.creator ? `<button class="btn sm" data-act="logoreset">Use creator's current logo settings</button>` : ""}
         <div class="row" style="justify-content:space-between;align-items:center"><h3>Post text</h3>
           <button class="btn sm" data-act="writetext">Write again with AI</button></div>
         <label class="f">Title<input data-f="title" value="${esc(c.title)}"></label>
@@ -2310,6 +2353,32 @@ function syncCaptionStyle(toggle) {
 }
 document.addEventListener("change", async e => {
   const t = e.target;
+  const logoBox = t.closest("[data-logo]");
+  if (logoBox) {
+    if (t.hasAttribute("data-logo-upload")) {
+      const file = t.files[0]; if (!file) return;
+      t.disabled = true; logoBox.dataset.uploading = "1";
+      try {
+        if (file.size > 5 * 1024 * 1024) throw new Error("The logo must be 5 MB or smaller.");
+        const form = new FormData(); form.append("file", file);
+        const logo = await api("/api/logos", {method: "POST", body: form});
+        if (!logoBox.isConnected) return;
+        logoBox.dataset.logoId = logo.id;
+        logoBox.querySelector("[data-logo-image]").src = `/api/logos/${encodeURIComponent(logo.id)}`;
+        logoBox.querySelector("[data-logo-enabled]").checked = true;
+        toast("Logo uploaded. Save to use it.", "ok");
+      } catch (err) { toast(err.message, "bad"); }
+      finally { t.disabled = false; t.value = ""; delete logoBox.dataset.uploading; }
+    }
+    if (t.hasAttribute("data-logo-position") && t.value !== "custom") {
+      const [x, y] = LOGO_POSITIONS[t.value];
+      logoBox.querySelector('[data-logo-value="x"]').value = x;
+      logoBox.querySelector('[data-logo-value="y"]').value = y;
+    }
+    previewLogo(logoBox);
+    if (logoBox.closest("#cform")) dirty(true);
+    return;
+  }
   if (t.id === "o_creator") {
     const toggle = $("#o_captions"), c = S.creators.find(c => c.id === t.value);
     if (!toggle.dataset.overridden) { toggle.checked = c?.captions !== false; syncCaptionStyle(toggle); }
@@ -2571,7 +2640,14 @@ document.addEventListener("click", async e => {
       const body = {}; $$("#clipdlg [data-f]").forEach(i => {
         body[i.dataset.f] = i.type === "checkbox" ? i.checked : i.type === "number" ? Number(i.value) : i.value;
       });
+      body.logo = readLogo($("#clipdlg [data-logo]"));
       await send(`/api/jobs/${D.jid}/clips/${D.cid}/render`, body); toast("Re-making the clip…", "ok"); return tick();
+    }
+    if (a === "logoreset") {
+      const current = S.creators.find(c => c.id === jobOf(D.jid)?.creator);
+      if (!current) throw new Error("That creator isn't available.");
+      $("#clipdlg [data-logo]").outerHTML = logoFields(current.logo);
+      return;
     }
     if (a === "writetext") {
       b.disabled = true; const was = b.textContent; b.textContent = "Writing…";

@@ -14,6 +14,12 @@ creator's live stream and clip the highlights while the stream is still running.
 - **Live clipping.** Records a stream into a rolling buffer and clips as it happens, using loudness, chat activity
   and the transcript.
 - **Workspaces per creator.** Channels, clip settings, posting rules and an activity log for each creator you clip.
+- **Your logo on clips.** Upload a still PNG, JPEG or WebP (up to 5 MB) under a creator's Setup, Logo. Choose a
+  corner or a custom position and a width as a percentage of the video. Transparent images keep their
+  transparency, and the logo keeps its shape. New video and live clips inherit these settings. In a clip's editor,
+  change its logo, turn it off, or use the creator's current settings, then **Save and re-make clip**. Existing
+  clips do not change when you update a creator's logo. Uploaded logos stay private in your data folder and are
+  kept so older clips can still be re-made with their original image.
 - **Posting.** Connect YouTube, Instagram and TikTok in one click, then queue or auto-post finished clips, with
   spacing and daily caps (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
 - **No sign-in on your own computer.** It opens straight into the dashboard. On a shared server, switch accounts on
