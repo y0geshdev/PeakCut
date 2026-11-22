@@ -1936,8 +1936,8 @@ function drawCreatorForm() {
       ${A.length ? `<div class="row" style="margin-bottom:16px">${A.map(a => `<label class="ck"><input type="checkbox" data-acc value="${esc(a.id)}" ${c.accounts.includes(a.id) ? "checked" : ""}>${esc(a.label)} · ${esc(a.name)}</label>`).join("")}</div>` : `<button class="btn" data-act="go" data-v="settings" style="margin-bottom:16px">${ic("cog")}Open Settings</button>`}
       <div class="fields"><label class="sw span"><input type="checkbox" data-k="autopost" ${c.autopost ? "checked" : ""}><span>Post new clips automatically<small>Clips that score high enough go out without you approving them.</small></span></label>
         <label class="f">Only auto-post clips scoring at least<input data-k="post_min_score" type="number" min="0" max="100" value="${c.post_min_score}"></label>
-        <label class="f">Minutes between posts on one account<input data-k="post_gap_min" type="number" value="${c.post_gap_min}"></label>
-        <label class="f">Most posts per account per day<input data-k="daily_cap" type="number" value="${c.daily_cap}"></label>
+        <label class="f">Minutes between posts on one account<input data-k="post_gap_min" type="number" min="0" max="1440" step="1" value="${c.post_gap_min}"><small class="sub" style="font-weight:400">0 means no wait between posts.</small></label>
+        <label class="f">Most posts per account per day<input data-k="daily_cap" type="number" min="1" step="1" value="${c.daily_cap}"><small class="sub" style="font-weight:400">No fixed upper limit.</small></label>
         <label class="f">Who can see posts (YouTube, TikTok)<select data-k="privacy">${opts({public:"Public", unlisted:"Unlisted", private:"Private"}, c.privacy)}</select></label>
         <label class="f">Campaign pay per 1,000 views ($)<input data-k="rate_per_1k" type="number" step="0.1" min="0" value="${c.rate_per_1k}"></label>
         <label class="f span">Line added to every post (credit, campaign tag)<input data-k="post_footer" value="${esc(c.post_footer)}" placeholder="Clipped from @streamer"></label></div></div>

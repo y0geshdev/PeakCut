@@ -31,7 +31,9 @@ creator's live stream and clip the highlights while the stream is still running.
   clips do not change when you update a creator's logo. Uploaded logos stay private in your data folder and are
   kept so older clips can still be re-made with their original image.
 - **Posting.** Connect YouTube, Instagram and TikTok in one click, then queue or auto-post finished clips, with
-  spacing and daily caps (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
+  your chosen spacing and daily limit. There is no fixed ceiling on the daily limit; set spacing to **0** for no
+  wait between posts. Platforms still apply their own posting limits
+  (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
 - **No sign-in on your own computer.** It opens straight into the dashboard. On a shared server, switch accounts on
   (`PEAKCUT_ACCOUNTS=1`) for email or Google sign-in and an admin dashboard.
 - **Your own AI.** Gemini, OpenAI, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that

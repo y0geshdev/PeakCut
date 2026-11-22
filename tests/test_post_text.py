@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,7 +35,7 @@ def fails_with(call, status, word=""):
 
 def main(data):
     os.environ.update(PEAKCUT_DATA=data, DATABASE_URL="", PEAKCUT_ACCOUNTS="0")
-    from studio import auth, brain, ctx, db, jobs, posting, server
+    from studio import auth, brain, creators, ctx, db, jobs, posting, server
 
     db.init()
     try:
@@ -65,8 +66,38 @@ def main(data):
             ok = True
         check("a clip with almost no speech says so instead of asking the AI", ok)
 
-        # ---- a finished clip
         user = auth.local_user().id
+        with ctx.as_user(user):
+            creator = creators.create({"name": "Posting rules", "post_gap_min": "1", "daily_cap": "500"})
+            check("posting settings accept one minute and 500 posts per day",
+                  creator["post_gap_min"] == 1 and creator["daily_cap"] == 500)
+            creators.forget(user)
+            creator = creators.get(creator["id"])
+            check("posting settings survive saving and reloading without being reset",
+                  creator["post_gap_min"] == 1 and creator["daily_cap"] == 500)
+
+            now = time.mktime((2026, 1, 2, 12, 0, 0, 0, 0, -1))
+            posts = [{"user": user, "account": "test-account", "status": "posted", "posted_at": now, "due_at": now}
+                     for _ in range(499)]
+            with patch.object(posting, "_posts", posts), patch.object(posting.time, "time", return_value=now):
+                check("the scheduler permits the 500th daily post with a one-minute gap",
+                      posting._next_slot("test-account", creator["post_gap_min"], creator["daily_cap"]) == now + 60)
+                posts.append(dict(posts[0]))
+                check("the scheduler still respects the chosen daily limit",
+                      posting._day(posting._next_slot("test-account", creator["post_gap_min"], creator["daily_cap"]))
+                      > posting._day(now))
+
+            creator = creators.update(creator["id"], {"post_gap_min": "0", "daily_cap": "1000000"})
+            check("posting settings have no fixed daily ceiling and permit zero spacing",
+                  creator["post_gap_min"] == 0 and creator["daily_cap"] == 1000000)
+            with patch.object(posting, "_posts", posts), patch.object(posting.time, "time", return_value=now):
+                check("zero spacing adds no delay even after 500 posts today",
+                      posting._next_slot("test-account", creator["post_gap_min"], creator["daily_cap"]) == now)
+            creator = creators.update(creator["id"], {"post_gap_min": "-1", "daily_cap": "0"})
+            check("posting settings remain nonnegative with a positive daily limit",
+                  creator["post_gap_min"] == 0 and creator["daily_cap"] == 1)
+
+        # ---- a finished clip
         clip = {"id": "clip1", "start": 0.0, "end": 8.0, "status": "done", "hook": "NO WAY", "title": "Old title",
                 "description": "Old words", "hashtags": ["old"], "score": 80, "version": 1, "file": "clip1.mp4"}
         with ctx.as_user(user):

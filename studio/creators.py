@@ -58,7 +58,7 @@ def _fix(c: dict) -> dict:
         c["channel"] = next((ch[k] for k in PLATFORMS if k in ch), "")
     return c
 NUMERIC = {"min_len": (5, 120), "max_len": (10, 180), "max_clips": (1, 500), "min_score": (0, 100), "buffer_min": (5, 120), "live_per_hour": (1, 60), "ai_every_min": (1, 30), "auto_jump_pct": (20, 300), "must_clip_min": (0, 240), "min_gap_min": (0, 60),
-           "post_min_score": (0, 100), "post_gap_min": (5, 1440), "daily_cap": (1, 50)}
+           "post_min_score": (0, 100), "post_gap_min": (0, 1440), "daily_cap": (1, None)}
 
 
 def root(cid) -> Path:
@@ -85,7 +85,9 @@ def _clean(data: dict) -> dict:
         v = data[k]
         if k in NUMERIC:
             lo, hi = NUMERIC[k]
-            v = max(lo, min(hi, int(float(v))))
+            v = max(lo, int(float(v)))
+            if hi is not None:
+                v = min(hi, v)
         elif k in ("auto_watch", "autopost", "ai_only_on_spike"):
             v = bool(v)
         elif k == "channels":
