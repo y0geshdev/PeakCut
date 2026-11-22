@@ -14,8 +14,26 @@ creator's live stream and clip the highlights while the stream is still running.
 - **Live clipping.** Records a stream into a rolling buffer and clips as it happens, using loudness, chat activity
   and the transcript.
 - **Workspaces per creator.** Channels, clip settings, posting rules and an activity log for each creator you clip.
+- **Choose up to 500 clips per video.** The default is 6. This is an upper limit, not a promise: the AI still picks
+  only suitable moments, using the same per-window limits and quotas for long videos.
+- **Stop one video.** Press **Stop** on a queued or running upload or video link. Confirm permanent deletion of all
+  generated clips, covers, captions, transcripts and other job files. **Keep source video** is checked by default;
+  uncheck it to delete PeakCut's stored copy too, never your original outside PeakCut. Long linked videos may only
+  have clip pieces, not a complete source to keep. Work and uploads already using these files finish before cleanup.
+  Scheduled posts are cancelled; published platform videos stay online. A small stopped-video record and any kept
+  source remain in storage. Stopped videos never resume after a restart; add the video again to make new clips.
+  If cleanup fails, the video stays **Stopping** with an error and **Retry stop**; its source choice is remembered.
+  Live recording's **Stop recording** still keeps clips already made.
+- **Your logo on clips.** Upload a still PNG, JPEG or WebP (up to 5 MB) under a creator's Setup, Logo. Choose a
+  corner or a custom position and a width as a percentage of the video. Transparent images keep their
+  transparency, and the logo keeps its shape. New video and live clips inherit these settings. In a clip's editor,
+  change its logo, turn it off, or use the creator's current settings, then **Save and re-make clip**. Existing
+  clips do not change when you update a creator's logo. Uploaded logos stay private in your data folder and are
+  kept so older clips can still be re-made with their original image.
 - **Posting.** Connect YouTube, Instagram and TikTok in one click, then queue or auto-post finished clips, with
-  spacing and daily caps (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
+  your chosen spacing and daily limit. There is no fixed ceiling on the daily limit; set spacing to **0** for no
+  wait between posts. Platforms still apply their own posting limits
+  (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
 - **No sign-in on your own computer.** It opens straight into the dashboard. On a shared server, switch accounts on
   (`PEAKCUT_ACCOUNTS=1`) for email or Google sign-in and an admin dashboard.
 - **Your own AI.** Gemini, OpenAI, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that

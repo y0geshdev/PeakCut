@@ -64,10 +64,12 @@ def _next_slot(account_id, gap_min, cap):
     return t
 
 
+@jobs._job_work
 def enqueue(job, clip, account_ids, now=False) -> list:
     c = creators.get(job["creator"]) or creators.DEFAULTS
     made = []
     with _lock:
+        jobs._check(job)
         for aid in account_ids:
             acc = accounts.get(aid)
             if not acc:
@@ -109,6 +111,20 @@ def _caption(clip, creator):
 
 def _post(p):
     job = jobs.get(p["job"])
+    if job:
+        try:
+            with jobs.work(job):
+                _upload(p, job)
+        except jobs.Stopped:
+            with _lock:
+                p.update(status="cancelled", error="The source video was stopped.")
+                _save()
+            ctx.bump()
+    else:
+        _upload(p, None)
+
+
+def _upload(p, job):
     clip = next((c for c in job["clips"] if c["id"] == p["clip"]), None) if job else None
     acc = accounts.get(p["account"])
     try:
@@ -132,7 +148,9 @@ def _post(p):
     except Exception as e:  # noqa: BLE001
         p["tries"] += 1
         p["error"] = str(e)[-300:]
-        if p["tries"] < 3 and clip and acc:
+        if job and job.get("stop"):
+            p.update(status="cancelled", error="The source video was stopped.")
+        elif p["tries"] < 3 and clip and acc:
             p.update(status="scheduled", due_at=time.time() + 600)  # try again in 10 minutes
         else:
             p["status"] = "failed"
@@ -140,6 +158,18 @@ def _post(p):
             alerts.notify(f"post failed on {p['account_name']} ({p['title']}): {p['error'][:200]}", kind="post")
     _save()
     _mirror(p)
+    ctx.bump()
+
+
+def cancel_job(job, drained=False):
+    """Keep published videos, but never try posting a removed clip again."""
+    with _lock:
+        states = ("scheduled", "failed", "cancelled") + (("posting",) if drained else ())
+        for p in _posts:
+            if p.get("user") == job["user"] and p["job"] == job["id"] and p["status"] in states:
+                p.update(status="cancelled", error="The source video was stopped.")
+        _save()
+    ctx.bump(job["user"])
 
 
 def _run():
@@ -203,6 +233,10 @@ def retry(pid):
         p = next((p for p in _mine() if p["id"] == pid), None)
         if not p or p["status"] not in ("failed", "cancelled"):
             raise ValueError("Only failed or cancelled posts can be retried.")
+        job = jobs.get(p["job"])
+        if not job:
+            raise ValueError("The source video no longer exists.")
+        jobs._check(job)
         p.update(status="scheduled", due_at=time.time(), tries=0, error=None)
         _save()
     _mirror(p)
@@ -266,6 +300,11 @@ def start():
         for p in _posts:
             if p["status"] == "posting":  # interrupted mid-upload last time
                 p.update(status="failed", error="The studio closed during this upload. Check the account, then retry.")
+            if p.get("user"):
+                with ctx.as_user(p["user"]):
+                    job = jobs.get(p["job"])
+                if job and job.get("stop") and p["status"] != "posted":
+                    p.update(status="cancelled", error="The source video was stopped.")
         _save()
     jobs.on_clip_ready.append(on_clip_ready)
     threading.Thread(target=_run, daemon=True).start()

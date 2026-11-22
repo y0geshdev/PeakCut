@@ -17,13 +17,13 @@ from urllib.parse import quote, urlparse
 
 import sqlalchemy as sa
 import uvicorn
-from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import admin as admins
 from . import account, load
-from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
+from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, logos, media, posting,
                profiles, render, safe, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
@@ -105,6 +105,8 @@ class Gate:
             piece = method == "PUT" and path.startswith("/api/upload/")
             cap = ((min(config.MAX_UPLOAD_MB, config.UPLOAD_PART_MB) if piece else config.MAX_UPLOAD_MB) + 8) * 1024 * 1024 \
                 if path == "/api/upload" or piece else 256 * 1024
+            if path == "/api/logos":
+                cap = logos.MAX_BYTES + 64 * 1024
             try:
                 if int(req.headers.get("content-length") or 0) > cap:
                     return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path == "/api/upload" else "That request is too large.")
@@ -805,16 +807,22 @@ def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), cr
         try:
             with _create_lock:
                 _job_slots()
-                job = jobs.create({"type": "file", "path": str(tmp), "name": name}, opts, enqueue=False, creator=creator or None)
+                job = jobs.create({"type": "file", "path": str(tmp), "name": name, "upload_file": tmp.name},
+                                  opts, enqueue=False, creator=creator or None)
         except (ValueError, TypeError):
             raise HTTPException(400, "Those options aren't valid.")
         _disk.pop(ctx.uid(), None)
         dest = jobs.job_dir(job["id"]) / ("source" + ext)
-        shutil.move(str(tmp), dest)
+        try:
+            with jobs.work(job):
+                shutil.move(str(tmp), dest)
+                job["source"]["path"] = str(dest)
+                jobs.source_ready(job, dest)
+                jobs.enqueue(job)
+        except jobs.Stopped:
+            return jobs.public(job)
     finally:
         tmp.unlink(missing_ok=True)
-    job["source"]["path"] = str(dest)
-    jobs.enqueue(job)
     return jobs.public(job)
 
 
@@ -962,23 +970,31 @@ def upload_finish(upid: str):
         try:
             with _create_lock:
                 _job_slots()
-                job = jobs.create({"type": "file", "path": "", "name": meta["name"]}, meta["options"], enqueue=False,
+                job = jobs.create({"type": "file", "path": "", "name": meta["name"], "upload_id": upid}, meta["options"], enqueue=False,
                                   creator=meta["creator"] or None)
         except (ValueError, TypeError):
             raise HTTPException(400, "Those options aren't valid.")
         dest = jobs.job_dir(job["id"]) / ("source" + meta["ext"])
         try:
-            with dest.open("wb") as out:
-                for p in parts:
-                    with p.open("rb") as src:
-                        shutil.copyfileobj(src, out, 4 * 1024 * 1024)
+            with jobs.work(job):
+                try:
+                    with dest.open("wb") as out:
+                        for p in parts:
+                            jobs._check(job)
+                            with p.open("rb") as src:
+                                shutil.copyfileobj(src, out, 4 * 1024 * 1024)
+                    job["source"]["path"] = str(dest)
+                    jobs.source_ready(job, dest)
+                    jobs.enqueue(job)
+                finally:
+                    shutil.rmtree(d, ignore_errors=True)
+        except jobs.Stopped:
+            return jobs.public(job)
         except OSError:
-            jobs.delete(job["id"])
+            if not job.get("stop"):
+                jobs.delete(job["id"])
             raise HTTPException(507, "There wasn't room to save this file. Delete some older videos and try again.")
-        shutil.rmtree(d, ignore_errors=True)
     _disk.pop(ctx.uid(), None)
-    job["source"]["path"] = str(dest)
-    jobs.enqueue(job)
     return jobs.public(job)
 
 
@@ -992,6 +1008,8 @@ def upload_cancel(upid: str):
 @app.post("/api/jobs/{jid}/clips/{cid}/render")
 def rerender(jid: str, cid: str, body: dict = Body(...)):
     job = _job_or_404(jid)
+    if job.get("stop"):
+        raise HTTPException(409, "This video was stopped. Add it again to make new clips.")
     clip = next((c for c in job["clips"] if c["id"] == cid), None)
     if not clip:
         raise HTTPException(404, "No such clip")
@@ -1017,6 +1035,8 @@ def _clip_or_404(jid: str, cid: str):
 def clip_text(jid: str, cid: str, body: dict = Body(...)):
     """Save a clip's title, description and hashtags. The video is not made again."""
     job, clip = _clip_or_404(jid, cid)
+    if job.get("stop"):
+        raise HTTPException(409, "This video is being stopped.")
     _throttle("cliptext:" + ctx.uid(), 120, 600)
     try:
         jobs.save_post_text(job, clip, body)
@@ -1040,10 +1060,23 @@ def clip_write(jid: str, cid: str):
         raise HTTPException(503, str(e))
 
 
+@app.post("/api/jobs/{jid}/stop")
+def stop_job(jid: str, body: dict = Body(...)):
+    _job_or_404(jid)
+    try:
+        job = jobs.stop(jid, body.get("keep_source", True))
+    except ValueError as error:
+        raise HTTPException(409, str(error))
+    except OSError:
+        raise HTTPException(507, "The stop choice could not be saved. Free some storage and try again.")
+    _disk.pop(ctx.uid(), None)
+    return jobs.public(job)
+
+
 @app.delete("/api/jobs/{jid}")
 def delete_job(jid: str):
     job = _job_or_404(jid)
-    if job["status"] in ("queued", "running", "live") or jid in live.SESSIONS:
+    if jobs.is_busy(job) or jid in live.SESSIONS:
         raise HTTPException(409, "This is still being worked on. Stop it or wait for it to finish first.")
     jobs.delete(jid)
     return {"ok": True}
@@ -1137,6 +1170,30 @@ def media_file(jid: str, name: str, download: int = 0):
 
 
 # ================================================================ creators and live recording
+@app.post("/api/logos")
+def upload_logo(file: UploadFile = File(...)):
+    _need_verified()
+    _throttle("logo:" + ctx.uid(), 20, 600, "That's a lot of logos. Wait a few minutes.")
+    _quota()
+    try:
+        return logos.upload(file.file.read(logos.MAX_BYTES + 1))
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    finally:
+        file.file.close()
+
+
+@app.get("/api/logos/{lid}")
+def logo_image(lid: str):
+    try:
+        image = logos.path(lid)
+    except ValueError:
+        raise HTTPException(404, "No such logo")
+    if not image.is_file():
+        raise HTTPException(404, "No such logo")
+    return FileResponse(image, media_type="image/png", headers={"Cache-Control": "private, no-store"})
+
+
 def _channel_ok(body: dict):
     links = [str(body.get("channel") or "").strip()]
     chs = body.get("channels")
@@ -1514,9 +1571,7 @@ def connect_callback(platform: str, code: str = "", state: str = "", error: str 
     return _back(connected=platform, name=acc["name"])
 
 
-@app.get("/pub/{token}.mp4")
-def public_clip(token: str):
-    """A clip for a platform to fetch while posting it: one clip, one hour, signed (see accounts.clip_link)."""
+def _posting_file(token: str):
     got = accounts.read_clip_link(token)
     if not got:
         raise HTTPException(404)
@@ -1526,6 +1581,16 @@ def public_clip(token: str):
         f = Path(job["dir"]) / "clips" / name if job else None
     if not f or not f.is_file():
         raise HTTPException(404)
+    try:
+        with jobs.work(job, reading=True):
+            yield f
+    except jobs.Stopped:
+        raise HTTPException(404)
+
+
+@app.get("/pub/{token}.mp4")
+def public_clip(f: Path = Depends(_posting_file)):
+    """A signed clip link; keep its file until the platform finishes reading the response."""
     return FileResponse(f, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
 
 
@@ -1628,7 +1693,10 @@ def add_posts(body: dict = Body(...)):
     clip = next((c for c in job["clips"] if c["id"] == body.get("clip")), None) if job else None
     if not clip or clip.get("status") != "done":
         raise HTTPException(404, "That clip is not ready")
-    made = posting.enqueue(job, clip, [str(a) for a in body.get("accounts", [])][:20], now=bool(body.get("now")))
+    try:
+        made = posting.enqueue(job, clip, [str(a) for a in body.get("accounts", [])][:20], now=bool(body.get("now")))
+    except jobs.Stopped as error:
+        raise HTTPException(409, str(error))
     if not made:
         raise HTTPException(400, "Nothing was queued. Pick at least one account this clip has not already gone to.")
     return {"queued": len(made)}
