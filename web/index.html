@@ -2217,10 +2217,11 @@ async function ytCookiesCard(logo) {
         <li>With an extension such as <b>Get cookies.txt LOCALLY</b>, export the cookies for youtube.com.</li>
         <li>Paste the whole file below and save. Then close that private window without signing out.</li></ol>
       <label class="f">cookies.txt<textarea id="ytc" rows="6" spellcheck="false" autocomplete="off" placeholder="# Netscape HTTP Cookie File"></textarea></label>
+      <label class="f">Or cookie file path<input id="ytcf" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/youtube-cookies.txt"></label>
       <div class="row"><button class="btn primary" data-act="ytcookies">Save</button><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div></div>` : "";
   return `<section class="set-sec"><h2>YouTube links</h2><p class="help">Only needed when YouTube links (videos or lives) fail with "YouTube isn't letting PeakCut download".</p>
     <div class="apps"><div class="appcard"><span class="applogo" style="background:#FF0000">${logo}</span>
-    <div class="apptx"><b>YouTube cookies</b><span>${st.saved ? `Saved ${new Date(st.updated * 1000).toLocaleString()}. Used for every YouTube link.` : "None saved."}</span></div>
+    <div class="apptx"><b>YouTube cookies</b><span>${st.saved ? `Saved ${new Date(st.updated * 1000).toLocaleString()}. Used for every YouTube link.${st.file ? ` File: ${esc(st.file)}` : ""}` : "None saved."}</span></div>
     <div class="appact">${act}</div>${panel}</div></div></section>`;
 }
 async function saveSettings() { const d = {}; $$("#sform [data-s]").forEach(i => d[i.dataset.s] = i.value); await send("/api/settings", d, "PUT"); }
@@ -2631,7 +2632,7 @@ document.addEventListener("click", async e => {
     if (a === "appsetup") { S.setupOpen = d.p && S.setupOpen !== d.p ? d.p : ""; return drawSettings(); }
     if (a === "copytext") { await navigator.clipboard.writeText(d.t); return toast("Copied", "ok"); }
     if (a === "ytcookies") {
-      await send("/api/youtube-cookies", d.remove ? {remove: true} : {text: $("#ytc").value}, "PUT");
+      await send("/api/youtube-cookies", d.remove ? {remove: true} : {text: $("#ytc").value, file: $("#ytcf").value}, "PUT");
       S.setupOpen = ""; toast(d.remove ? "YouTube cookies removed." : "Saved. YouTube links will use them now.", "ok"); return drawSettings();
     }
     if (a === "appsave") {
