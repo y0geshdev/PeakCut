@@ -15,7 +15,7 @@ class Busy(Exception):
 
 
 def _busy(job) -> bool:
-    return job["status"] in ("queued", "running", "live") or job["id"] in live.SESSIONS
+    return jobs.is_busy(job) or job["id"] in live.SESSIONS
 
 
 # ---------------------------------------------------------------- clips and videos
@@ -27,7 +27,7 @@ def delete_clip(jid: str, cid: str) -> bool:
     clip = next((c for c in job["clips"] if c["id"] == cid), None)
     if not clip:
         return False
-    if clip.get("status") in ("queued", "rendering"):
+    if job["status"] == "stopping" or clip.get("status") in ("queued", "rendering"):
         raise Busy("This clip is still being made. Wait for it to finish first.")
     job["clips"] = [c for c in job["clips"] if c["id"] != cid]
     jobs.save(job)

@@ -1258,7 +1258,7 @@ function moveInd() {
 }
 function drawShell() {  const nav = (v, icon, label, extra = "") => `<button class="nav-item ${S.view === v ? "on" : ""}" data-act="go" data-v="${esc(v)}" title="${esc(label)}">${icon}<span class="label">${esc(label)}</span>${extra}</button>`;
   put($("#nav"), nav("overview", navIc("home", "overview"), "Home") +
-    nav("library", navIc("film", "library"), "All videos", (() => { const w = S.jobs.filter(j => ["queued", "running"].includes(j.status)).length;
+    nav("library", navIc("film", "library"), "All videos", (() => { const w = S.jobs.filter(j => ["queued", "running", "stopping"].includes(j.status)).length;
       return w ? `<span class="working" title="${w} working now"><i></i>${w} working</span>` : S.jobs.length ? `<span class="count">${S.jobs.length}</span>` : ""; })()) +
     `<h4><span>Creators</span></h4>` +
     S.creators.map(c => nav("c:" + c.id, cav(c), c.name,
@@ -1382,7 +1382,7 @@ function drawAdd(variant) {
     <div class="composer-opts" inert><div class="og">
       ${langSeg(c?.lang || "en")}
       <div class="ob wide"><div class="ot">Clips</div><div class="nsteps">
-        ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, 20, 1, "")}
+        ${stepper("o_max", "How many", c?.max_clips ?? 6, 1, 500, 1, "")}
         ${stepper("o_min", "Shortest", c?.min_len ?? 15, 5, 120, 5, "s")}
         ${stepper("o_maxlen", "Longest", c?.max_len ?? 60, 10, 180, 5, "s")}
       </div></div>
@@ -1780,18 +1780,18 @@ function liveHtml(j) {
 }
 function jobHtml(j) {
   if (j.status === "live") return liveHtml(j);
-  const busy = j.status === "queued" || j.status === "running";
+  const busy = ["queued", "running", "stopping"].includes(j.status);
   const who = !creatorId() && j.creator ? S.creators.find(c => c.id === j.creator)?.name : "";
   const meta = [who, j.uploader, j.duration ? fmt(j.duration) + " long" : "", j.clips.length ? j.clips.length + (j.clips.length === 1 ? " clip" : " clips") : "",
                 j.took ? "made in " + fmt(j.took) : "", j.kind === "live" ? "recording, " + j.stage.toLowerCase() : ""].filter(Boolean).map(esc).join(" · ");
   const pic = j.thumb ? `<img src="/media/${esc(j.id)}/thumb.jpg" alt="" loading="lazy">` : ic(j.source?.type === "file" ? "film" : "link");
   return `<div class="job-head"><div class="jt"><span class="jthumb">${pic}${j.duration ? `<span class="du">${fmt(j.duration)}</span>` : ""}</span><div style="min-width:0"><h3>${esc(j.title || j.source.name)}</h3><p class="sub">${meta}</p></div></div>
-      <div class="row" style="flex-wrap:nowrap;gap:4px">${busy ? "" : `
+      <div class="row" style="flex-wrap:nowrap;gap:4px">${busy ? (j.kind === "video" && (j.status !== "stopping" || j.error) ? `<button class="btn sm danger" data-act="stopjob" data-j="${j.id}">${j.status === "stopping" ? "Retry stop" : "Stop"}</button>` : "") : `
         ${j.clips.some(c => c.status === "done") ? `<button class="btn sm icon ghost" data-act="dlall" data-j="${j.id}" title="Download all clips of this video" aria-label="Download all clips of this video">${ic("down")}</button>` : ""}
         <button class="btn sm icon ghost" data-act="deljob" data-j="${j.id}" title="Delete" aria-label="Delete this video and its clips">${ic("trash")}</button>
         <label class="selck" title="Select this video and its clips"><input type="checkbox" data-sel="j:${j.id}" ${sel().has("j:" + j.id) ? "checked" : ""} aria-label="Select this video"></label>`}</div></div>
     ${busy ? `<div class="bar"><i style="width:${Math.round(j.progress * 100)}%"></i></div><p class="sub">${esc(j.stage)} · ${Math.round(j.progress * 100)}%</p>` : ""}
-    ${j.status === "done" && !j.clips.length ? `<p class="sub">${esc(j.stage)}</p>` : ""}
+    ${(j.status === "done" && !j.clips.length) || j.status === "stopped" ? `<p class="sub">${esc(j.stage)}</p>` : ""}
     ${j.error ? `<div class="err">${esc(j.error)}<button class="rep" data-act="report" data-ctx="${esc("Video failed: " + (j.title || j.source.name || "") + " | " + j.error)}">Report this</button></div>` : ""}${j.ai?.note ? `<p class="sub">${esc(j.ai.note)}</p>` : ""}
     ${j.clips.length ? `<div class="grid">${j.clips.map(c => clipHtml(j, c)).join("")}</div>` : ""}`;
 }
@@ -1839,6 +1839,19 @@ function askTyped(title, text, mustType, okLabel) {
     const i = $("#typedconfirm");
     i.addEventListener("input", () => { $("#typedok").disabled = i.value.trim().toLowerCase() !== mustType.toLowerCase(); });
     d.onclose = () => res(d.returnValue === "yes" ? i.value.trim() : null); d.returnValue = "no"; d.showModal(); i.focus();
+  });
+}
+function askStopJob() {
+  return new Promise(res => {
+    const d = $("#formdlg");
+    d.innerHTML = `<form method="dialog" class="dlg"><h2>Stop this video?</h2>
+      <p class="help">All clips already made, covers, captions, transcripts and other generated files for this video will be permanently deleted. Scheduled posts are cancelled; already-published videos stay online. Any work or upload already using a clip must finish before its files are removed. This cannot be undone.</p>
+      <label class="ck"><input id="stopkeep" type="checkbox" checked> Keep source video</label>
+      <p class="help">Only PeakCut's stored copy can be deleted, never your original. A complete copy may not be available yet; long linked videos may only have clip pieces. If a full copy finishes downloading before the stop completes, it can be kept.</p>
+      <div class="dlg-foot"><button class="btn" value="no">Cancel</button><button class="btn danger" value="yes">Stop and delete generated files</button></div></form>`;
+    const keep = $("#stopkeep");
+    d.onclose = () => res(d.returnValue === "yes" ? keep.checked : null);
+    d.returnValue = "no"; d.showModal();
   });
 }
 function drawJobs() {
@@ -1914,7 +1927,7 @@ function drawCreatorForm() {
         <label class="f">Game<input data-k="game" value="${esc(c.game || "")}" placeholder="Read from the title"><small class="sub" style="font-weight:400">Left empty, the game is read from the stream's title. Set it for a streamer whose title says nothing: GTA 6, Fortnite, Elden Ring.</small></label>
         <label class="f">Shortest clip (seconds)<input data-k="min_len" type="number" value="${c.min_len}"></label>
         <label class="f">Longest clip (seconds)<input data-k="max_len" type="number" value="${c.max_len}"></label>
-        <label class="f">Clips per video<input data-k="max_clips" type="number" value="${c.max_clips}"></label>
+        <label class="f">Clips per video<input data-k="max_clips" type="number" min="1" max="500" value="${c.max_clips}"></label>
         <label class="f span">Big text on every clip<input data-k="hook_text" maxlength="60" value="${esc(c.hook_text || "")}" placeholder="Left empty, the AI writes a different one for each clip"><small class="sub" style="font-weight:400">For a campaign that asks for a set line on every clip. It is shown exactly as typed.</small></label>
         <label class="f span">Description for every clip<textarea data-k="description_text" rows="3" maxlength="2000" placeholder="Left empty, the AI writes a different one for each clip">${esc(c.description_text || "")}</textarea><small class="sub" style="font-weight:400">Written once, used as the description of every clip of this creator, exactly as typed. It is posted as it is, without the AI's hashtags.</small></label>
         <label class="f">Minutes of live stream to keep<input data-k="buffer_min" type="number" value="${c.buffer_min}"></label></div></div>
@@ -2336,7 +2349,7 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("focus", () => { if (!document.hidden) tick(); });
 function loop() {
-  const active = S.jobs.some(j => ["queued", "running", "live"].includes(j.status) || j.clips.some(c => c.status === "queued" || c.status === "rendering"));
+  const active = S.jobs.some(j => ["queued", "running", "live", "stopping"].includes(j.status) || j.clips.some(c => c.status === "queued" || c.status === "rendering"));
   // quick while something is being made, relaxed otherwise, and slow when the tab is in the background
   const waiting = S.creators.some(c => (c.channels && Object.keys(c.channels).length && !c.profile?.pic) || c.live_job && !jobOf(c.live_job));
   setTimeout(async () => { await tick(); loop(); }, document.hidden ? 20000 : waiting ? 1000 : active ? 2000 : 4000);
@@ -2521,7 +2534,7 @@ document.addEventListener("click", async e => {
     if (a === "selclear") { sel().clear(); return render(); }
     if (a === "selall") {
       const cid = creatorId();
-      (cid ? S.jobs.filter(j => j.creator === cid) : S.jobs).forEach(j => { if (!["queued", "running", "live"].includes(j.status)) { sel().add("j:" + j.id); j.clips.forEach(c => sel().delete(`c:${j.id}:${c.id}`)); } });
+      (cid ? S.jobs.filter(j => j.creator === cid) : S.jobs).forEach(j => { if (!["queued", "running", "live", "stopping"].includes(j.status)) { sel().add("j:" + j.id); j.clips.forEach(c => sel().delete(`c:${j.id}:${c.id}`)); } });
       return render();
     }
     if (a === "seldel") {
@@ -2550,6 +2563,15 @@ document.addEventListener("click", async e => {
     if (a === "deljob") {
       if (!await ask("Delete this video?", "The video and all of its clips are permanently deleted. This cannot be undone.", "Delete", true)) return;
       await api(`/api/jobs/${d.j}`, {method:"DELETE"}); toast("Deleted"); return tick();
+    }
+    if (a === "stopjob") {
+      const j = jobOf(d.j); if (!j) return;
+      const keep = j.status === "stopping" ? j.stop.keep_source : await askStopJob();
+      if (keep === null) return;
+      const stopped = await send(`/api/jobs/${d.j}/stop`, {keep_source: keep});
+      Object.assign(j, stopped); drawJobs();
+      toast("Stopping this video. Files will be removed once its work has finished.", "ok");
+      return tick();
     }
     if (a === "chadd") {
       const k = d.p, v = $("#chan_" + k)?.value.trim();
