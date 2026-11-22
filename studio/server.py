@@ -1665,16 +1665,37 @@ def apps_put(request: Request, body: dict = Body(...)):
 def yt_cookies_get(request: Request):
     _admin(request)
     f = config.YT_COOKIES
-    return {"saved": f.is_file(), "updated": int(f.stat().st_mtime) if f.is_file() else 0}
+    ff = config.YT_COOKIES_FILE
+    saved = f.is_file() or (ff and ff.is_file())
+    times = []
+    if f.is_file():
+        times.append(f.stat().st_mtime)
+    if ff and ff.is_file():
+        times.append(ff.stat().st_mtime)
+    sp = config.DATA_DIR / "youtube-cookies-file.txt"
+    if sp.is_file():
+        try:
+            p = Path(sp.read_text(encoding="utf-8").strip())
+            if p.is_file():
+                times.append(p.stat().st_mtime)
+        except OSError:
+            pass
+    updated = int(max(times)) if times else 0
+    return {"saved": saved, "updated": updated, "file": str(ff or sp) if (ff and ff.is_file()) or sp.is_file() else None}
 
 
 @app.put("/api/youtube-cookies")
 def yt_cookies_put(request: Request, body: dict = Body(...)):
     _admin(request)
     f, text = config.YT_COOKIES, str(body.get("text") or "")
+    file_path = str(body.get("file") or "").strip()
     if body.get("remove"):
         f.unlink(missing_ok=True)
-    else:
+        sp = config.DATA_DIR / "youtube-cookies-file.txt"
+        sp.unlink(missing_ok=True)
+    elif file_path:
+        (config.DATA_DIR / "youtube-cookies-file.txt").write_text(file_path, encoding="utf-8")
+    elif text:
         rows = [l.split("\t") for l in text.splitlines() if l.strip() and not l.startswith("# ")]
         if len(text) > 1_000_000 or not any(len(r) == 7 and "youtube.com" in r[0] for r in rows):
             raise HTTPException(400, "That doesn't look like a cookies.txt file with YouTube cookies in it. Export it "

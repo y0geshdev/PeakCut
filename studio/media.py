@@ -39,10 +39,21 @@ def youtube_paused() -> bool:
     return time.time() < _yt_refused_until
 
 
+def _blocked_message() -> str:
+    """User-facing message when YouTube is refusing downloads. When an admin has
+    saved cookies but YouTube still refuses, they may have expired and need
+    refreshing under Settings, Connected apps."""
+    if _yt_cookies_file():
+        return ("YouTube isn't letting PeakCut download videos right now. Your saved YouTube cookies "
+                "may have expired; refresh them under Settings, Connected apps. Upload the video file "
+                "instead, or use a Twitch or Kick link. YouTube links will be tried again in a few minutes.")
+    return YT_BLOCKED
+
+
 def check_youtube(url: str):
     """Raise YouTubeBlocked straight away if YouTube is refusing this server right now."""
     if is_youtube(url) and youtube_paused():
-        raise YouTubeBlocked(YT_BLOCKED)
+        raise YouTubeBlocked(_blocked_message())
 
 
 def note_refusal(url: str, err) -> bool:
@@ -50,6 +61,13 @@ def note_refusal(url: str, err) -> bool:
     global _yt_refused_until
     if is_youtube(url) and _BOT_CHECK.search(str(err)):
         _yt_refused_until = time.time() + YT_PAUSE
+        if config.YT_COOKIES.is_file() or _yt_cookies_file():
+            print("  YouTube is refusing this server's downloads even though YouTube cookies are saved. "
+                  "Your saved cookies may have expired; refresh them under Settings, Connected apps. "
+                  "YouTube links are paused for 10 minutes.", flush=True)
+        else:
+            print("  YouTube is refusing this server's downloads (\"sign in to confirm you're not a bot\"). "
+                  "Add YouTube cookies under Settings, Connected apps. YouTube links are paused for 10 minutes.", flush=True)
         return True
     return False
 
@@ -63,7 +81,7 @@ def _youtube_guard(url):
         raise
     except Exception as e:  # noqa: BLE001
         if note_refusal(url, e):
-            raise YouTubeBlocked(YT_BLOCKED) from None
+            raise YouTubeBlocked(_blocked_message()) from None
         raise
 
 
@@ -96,9 +114,30 @@ class _Quiet:
     def error(self, m): pass
 
 
+def _yt_cookies_file() -> Path | None:
+    """Resolve which YouTube cookie file to use: an exported file path (env var or saved via UI) takes
+    precedence, then the cookies pasted via Settings > Connected apps. yt-dlp only sends them to YouTube."""
+    pf = config.YT_COOKIES_FILE
+    if pf and pf.is_file():
+        return pf
+    sp = config.DATA_DIR / "youtube-cookies-file.txt"
+    if sp.is_file():
+        try:
+            p = Path(sp.read_text(encoding="utf-8").strip())
+            if p.is_file():
+                return p
+        except OSError:
+            pass
+    if config.YT_COOKIES.is_file():
+        return config.YT_COOKIES
+    return None
+
+
 def cookie_opts() -> dict:
-    """The YouTube cookies an admin saved (Settings, Connected apps), if any. yt-dlp only sends them to YouTube."""
-    return {"cookiefile": str(config.YT_COOKIES)} if config.YT_COOKIES.is_file() else {}
+    """The YouTube cookies an admin saved (Settings, Connected apps), or an exported cookie file path,
+    if any. yt-dlp only sends them to YouTube."""
+    f = _yt_cookies_file()
+    return {"cookiefile": str(f)} if f else {}
 
 
 def _ydl(opts):
