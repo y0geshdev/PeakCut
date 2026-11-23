@@ -1040,6 +1040,35 @@ def rerender_all(jid: str):
     return jobs.public(job)
 
 
+@app.post("/api/jobs/{jid}/clips/reprocess")
+def reprocess(jid: str, body: dict = Body(...)):
+    """Re-make clips of a video: mode "failed" retries only the clips that errored with their current
+    settings, mode "all" re-makes every clip with the settings sent in body["options"]."""
+    job = _job_or_404(jid)
+    if job["status"] in ("queued", "running", "stopping") or job.get("stop"):
+        raise HTTPException(409, "This video is still being worked on.")
+    mode = body.get("mode")
+    if mode == "failed":
+        clips = [c for c in job["clips"] if c.get("status") == "error"]
+        changes = {}
+        if not clips:
+            raise HTTPException(400, "No failed clips to re-process.")
+    elif mode == "all":
+        clips = [c for c in job["clips"] if c.get("status") not in ("queued", "rendering")]
+        changes = body.get("options") or {}
+        if not clips:
+            raise HTTPException(400, "This video has no clips to re-process.")
+    else:
+        raise HTTPException(400, "Choose failed clips only, or all clips.")
+    _throttle("render-all:" + ctx.uid(), 10, 600, "That's a lot of re-makes. Wait a few minutes.")
+    for clip in clips:
+        try:
+            jobs.request_render(jid, clip["id"], changes)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e))
+    return jobs.public(job)
+
+
 def _clip_or_404(jid: str, cid: str):
     job = _job_or_404(jid)
     clip = next((c for c in job["clips"] if c["id"] == cid), None)
