@@ -1856,6 +1856,19 @@ function askStopJob() {
     d.returnValue = "no"; d.showModal();
   });
 }
+
+function askRetryInterval(count) {
+  return new Promise(res => {
+    const d = $("#formdlg");
+    d.innerHTML = `<form method="dialog" class="dlg"><h2>Retry all failed clips?</h2>
+      <p class="help">This will retry ${count} failed clip${count !== 1 ? "s" : ""}. Space them out so they don't all go out at once.</p>
+      <label class="f"><span>Minutes between each retry</span><input id="retryinterval" type="number" min="0" step="5" value="0"></label>
+      <div class="dlg-foot"><button class="btn" value="no">Cancel</button><button class="btn primary" value="yes">Retry all</button></div></form>`;
+    const i = $("#retryinterval");
+    d.onclose = () => res(d.returnValue === "yes" ? Number(i.value || 0) : null);
+    d.returnValue = "no"; d.showModal(); i.focus();
+  });
+}
 function drawJobs() {
   const root = $("#jobs"); if (!root) return;
   const cid = creatorId();
@@ -2014,7 +2027,12 @@ function drawOverview() {
       ${o.creators.map(r => `<tr><td><a class="lnk" href="#" data-act="go" data-v="c:${esc(r.id)}">${esc(r.name)}</a></td><td>${state(r)}</td><td>${r.autopost ? `<span class="pill ok">On</span>` : `<span class="pill">Off</span>`}</td><td class="num">${r.clips_today} <span class="sub">/ ${r.clips_total}</span></td><td class="num">${r.posted_today} <span class="sub">/ ${r.posted_total}</span></td><td class="num">${r.queued}</td><td class="num">${r.failed}</td><td class="num">${r.views.toLocaleString()}</td><td class="num">${r.earnings.toFixed(2)}</td></tr>`).join("")}</table></div>`
       : `<div class="empty"><img src="/brand/favicon.svg" alt=""><b>No creators yet</b>Add one to give each streamer their own workspace.</div>`}</div>
     <div class="card"><div class="card-head"><div><h2>Post queue</h2><p class="sub">${o.paused ? "Paused. Recording and clipping carry on; nothing is posted." : "Queued clips go out at their scheduled time."}</p></div>
-        <button class="btn ${o.paused ? "primary" : ""}" data-act="pause">${ic(o.paused ? "play" : "pause")}${o.paused ? "Resume posting" : "Pause all posting"}</button></div>
+        <button class="btn ${o.paused ? "primary" : ""}" data-act="pause">${ic(o.paused ? "play" : "pause")}${o.paused ? "Resume posting" : "Pause all posting"}</button>
+        ${() => {
+          const pend = (o.posts || []).filter(p => p.status === "scheduled").length;
+          const fl = (o.posts || []).filter(p => p.status === "failed").length;
+          return `<button class="btn sm danger${pend ? "" : " disabled"}" data-act="pcancelall">${ic("trash")}Cancel All Pending</button><button class="btn sm${fl ? "" : " disabled"}" data-act="pretryall">${ic("refresh")}Retry All Failed</button>`;
+        }()}</div>
       ${o.posts.length ? `<div class="scroll"><table class="stack"><tr><th>When</th><th>Clip</th><th>Creator</th><th>Account</th><th class="num">Views</th><th></th></tr>
       ${o.posts.map(p => `<tr><td data-l="Status">${pst(p)}</td><td data-l="Clip" class="c-main">${p.url ? `<a class="lnk" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>` : esc(p.title)}${p.error ? `<div class="err" style="margin:2px 0 0">${esc(p.error)}</div>` : ""}</td><td data-l="Creator">${esc(p.creator_name || "None")}</td><td data-l="Account">${esc(p.account_name)}</td><td data-l="Views" class="num">${p.views ?? "–"}</td>
         <td class="c-act" style="text-align:right">${p.status === "scheduled" ? `<button class="btn sm" data-act="pcancel" data-id="${p.id}">Cancel</button>` : p.status === "failed" ? `<button class="btn sm" data-act="pretry" data-id="${p.id}">Retry</button>` : ""}</td></tr>`).join("")}</table></div>`
@@ -2658,6 +2676,23 @@ document.addEventListener("click", async e => {
     if (a === "cdiscard") { drawCreatorForm(); return toast("Changes discarded"); }
     if (a === "pause") { await send("/api/settings", {paused:!S.overview.paused}, "PUT"); return loadOverview(); }
     if (a === "pcancel" || a === "pretry") { await api(`/api/posts/${d.id}/${a === "pcancel" ? "cancel" : "retry"}`, {method:"POST"}); return loadOverview(); }
+    if (a === "pcancelall") {
+      const pend = (S.overview.posts || []).filter(p => p.status === "scheduled").length;
+      if (!pend || !await ask("Cancel all pending clips?", `This will cancel ${pend} pending clip${pend !== 1 ? "s" : ""}. This cannot be undone.`, "Cancel all", true)) return;
+      await send("/api/posts/cancel-all-pending", {}, "POST");
+      toast(`Cancelled ${pend} pending clip${pend !== 1 ? "s" : ""}.`, "ok");
+      return loadOverview();
+    }
+    if (a === "pretryall") {
+      const fl = (S.overview.posts || []).filter(p => p.status === "failed").length;
+      if (!fl) return;
+      const interval = await askRetryInterval(fl);
+      if (interval === null) return;
+      await send("/api/posts/retry-all-failed", {interval_min: interval}, "POST");
+      const when = interval > 0 ? `, spaced ${interval} minute${interval !== 1 ? "s" : ""} apart` : "";
+      toast(`Retried ${fl} failed clip${fl !== 1 ? "s" : ""}${when}.`, "ok");
+      return loadOverview();
+    }
     if (a === "ssave") { await saveSettings(); toast("Saved", "ok"); return drawSettings(); }
     if (a === "plansave") {
       const p = {}; $$("#sform [data-plan]").forEach(i => { (p[i.dataset.plan] ??= {})[i.dataset.f] = Number(i.value); });

@@ -1740,6 +1740,19 @@ def add_posts(body: dict = Body(...)):
     return {"queued": len(made)}
 
 
+@app.post("/api/posts/cancel-all-pending")
+def cancel_all_pending():
+    n = posting.cancel_all_pending()
+    return {"cancelled": n}
+
+
+@app.post("/api/posts/retry-all-failed")
+def retry_all_failed(body: dict = Body(...)):
+    interval_min = int(body.get("interval_min", 0) or 0)
+    n = posting.retry_all_failed(interval_min)
+    return {"retried": n}
+
+
 @app.post("/api/posts/{pid}/{action}")
 def post_action(pid: str, action: str):
     try:

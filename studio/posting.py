@@ -242,6 +242,44 @@ def retry(pid):
     _mirror(p)
 
 
+def cancel_all_pending():
+    """Cancel every post still waiting (scheduled) for the signed-in user."""
+    with _lock:
+        changed = 0
+        for p in _mine():
+            if p["status"] == "scheduled":
+                p["status"] = "cancelled"
+                changed += 1
+        if changed:
+            _save()
+    for p in _mine():
+        if p["status"] == "cancelled":
+            _mirror(p)
+    return changed
+
+
+def retry_all_failed(interval_min: int = 0):
+    """Re-queue every failed post for the signed-in user, spacing each retry interval_min minutes apart."""
+    with _lock:
+        changed = 0
+        now = time.time()
+        for p in _mine():
+            if p["status"] == "failed":
+                job = jobs.get(p["job"])
+                if not job:
+                    continue
+                jobs._check(job)
+                due = now + changed * interval_min * 60
+                p.update(status="scheduled", due_at=due, tries=0, error=None)
+                changed += 1
+        if changed:
+            _save()
+    for p in _mine():
+        if p["status"] == "scheduled":
+            _mirror(p)
+    return changed
+
+
 def overview() -> dict:
     today = _day(time.time())
     _posts = _mine()  # everything below is about the signed-in user only
