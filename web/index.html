@@ -523,6 +523,8 @@ img.av{object-fit:cover}
 .err{color:var(--bad);font-size:13px;overflow-wrap:anywhere;margin:6px 0}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px}
 .clip{background:#fff;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
+.job.collapsed .job-body{display:none}
+.job-head .jt{cursor:pointer}
 .shot{position:relative;aspect-ratio:9/16;background:#17110E;border:0;padding:0;cursor:pointer;display:block;width:100%;overflow:hidden}
 .shot img{width:100%;height:100%;object-fit:cover;display:block}
 .shot .veil{position:absolute;left:10px;bottom:10px}
@@ -607,6 +609,15 @@ dialog::backdrop{background:rgba(14,12,11,.42);animation:fadein .16s ease}
 .dlg{padding:24px;width:450px;max-width:100%;display:flex;flex-direction:column;gap:14px}
 .dlg h2{font-size:18px;font-weight:600;color:var(--brand-ink)}
 .dlg-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+label.radio{display:flex;align-items:flex-start;gap:10px;padding:10px 13px;border-radius:var(--r);cursor:pointer;background:#fff;border:1px solid var(--line-2)}
+label.radio:hover{border-color:#D4CAC3}
+label.radio:has(input:checked){border-color:var(--brand);background:var(--brand-soft)}
+label.radio input{accent-color:var(--brand);margin:3px 0 0;flex:none}
+label.radio .t{font-weight:600;color:var(--text);display:block}
+label.radio .d{font-size:12px;color:var(--dim);margin-top:2px;display:block}
+label.radio .count{font-size:11px;background:var(--line-2);color:var(--dim);padding:1px 7px;border-radius:999px;margin-left:6px;white-space:nowrap}
+#repro-opts{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:14px}
+#repro-opts[hidden]{display:none}
 .editor{display:grid;grid-template-columns:minmax(240px,340px) minmax(300px,450px);max-height:calc(100vh - 48px)}
 .editor .stage{background:#17110E;display:grid;place-items:center;position:relative;min-height:320px}
 .editor video,.editor .stage img{width:100%;max-height:calc(100vh - 48px);aspect-ratio:9/16;object-fit:contain;display:block}
@@ -938,6 +949,67 @@ function ask(title, text, okLabel = "Confirm", danger = false) {
     d.innerHTML = `<form method="dialog" class="dlg"><h2>${esc(title)}</h2><p class="help">${esc(text)}</p>
       <div class="dlg-foot"><button class="btn" value="no">Cancel</button><button class="btn ${danger ? "danger" : "primary"}" value="yes" autofocus>${esc(okLabel)}</button></div></form>`;
     d.onclose = () => res(d.returnValue === "yes"); d.returnValue = "no"; d.showModal();
+  });
+}
+/* Re-process the clips of a video: retry only the failed ones, or re-make every clip with new settings.
+   Resolves with {mode: "failed"|"all", options: {...}}, or null when cancelled. */
+function openRepro(j) {
+  return new Promise(res => {
+    const d = $("#formdlg");
+    const failed = j.clips.filter(c => c.status === "error").length;
+    const total = j.clips.length;
+    const o = j.options || {};
+    d.innerHTML = `<div class="dlg" style="width:540px">
+      <h2>Re-process clips</h2>
+      <p class="help">Choose whether to retry only the clips that failed, or update settings and re-process every clip in this video.</p>
+      <label class="radio"><input type="radio" name="rmode" value="failed" checked><span><span class="t">Re-process failed clips only</span><span class="d">Keeps current settings. Retries <b>${failed}</b> clip${failed === 1 ? "" : "s"} that errored.</span></span></label>
+      <label class="radio"><input type="radio" name="rmode" value="all"><span><span class="t">Update settings &amp; re-process all clips</span><span class="d"><span class="count">${total} clips</span> Applies the settings below to every clip in this video.</span></span></label>
+      <div id="repro-opts" hidden>
+        <label class="sw"><input type="checkbox" id="repro-captions" data-f="captions" ${o.captions === false ? "" : "checked"}>Generate captions</label>
+        <div class="two"><label class="f">Caption style<select data-f="style" id="repro-style" ${o.captions === false ? "disabled" : ""}>${opts(S.status.styles, o.style)}</select></label>
+          <label class="f">Layout<select data-f="layout">${opts(S.status.layouts, o.layout)}</select></label></div>
+        <h3>Logo</h3>
+        ${logoFields(o.logo)}
+        <label class="f">Title (appended to existing)<input type="text" data-f="title" placeholder="Left empty — keeps existing title"></label>
+        <label class="f">Description (appended to existing)<textarea data-f="description" rows="2" placeholder="Left empty — keeps existing description"></textarea></label>
+        <label class="f">Hashtags (appended to existing)<input type="text" data-f="hashtags" placeholder="funny gaming clutch"></label>
+      </div>
+      <div class="dlg-foot"><button class="btn" type="button" id="repro-no">Cancel</button><button class="btn primary" type="button" id="repro-yes">Re-process</button></div>
+    </div>`;
+    const optsBox = d.querySelector("#repro-opts");
+    const styleSel = d.querySelector("#repro-style");
+    d.querySelectorAll('input[name="rmode"]').forEach(r => r.addEventListener("change", () => {
+      optsBox.hidden = d.querySelector('input[name="rmode"]:checked').value !== "all";
+    }));
+    d.querySelector("#repro-captions").addEventListener("change", e => { styleSel.disabled = !e.target.checked; });
+    d.onclick = e => { if (e.target === d) d.close(); };
+    d.onclose = () => res(null);
+    d.querySelector("#repro-no").addEventListener("click", () => d.close());
+    d.querySelector("#repro-yes").addEventListener("click", () => {
+      try {
+        const mode = d.querySelector('input[name="rmode"]:checked').value;
+        const options = {};
+        if (mode === "all") {
+          const get = k => {
+            const el = d.querySelector(`[data-f="${k}"]`);
+            if (!el) return undefined;
+            if (el.type === "checkbox") return el.checked;
+            if (el.type === "number") return el.value === "" ? undefined : Number(el.value);
+            return el.value;
+          };
+          options.captions = get("captions") !== false;
+          options.style = get("style");
+          options.layout = get("layout");
+          options.logo = readLogo(d.querySelector("[data-logo]"));
+          const t = get("title"); if (t) options.title = t;
+          const desc = get("description"); if (desc) options.description = desc;
+          const tags = get("hashtags"); if (tags) options.hashtags = tags;
+        }
+        res({mode, options});
+        d.close();
+      } catch (err) { toast(err.message, "bad"); }
+    });
+    d.showModal();
   });
 }
 
@@ -1779,23 +1851,32 @@ function liveHtml(j) {
     </div>${j.error ? `<div class="err">${esc(j.error)}</div>` : ""}</div>
     ${j.clips.length ? `<div class="grid" style="margin-bottom:28px">${[...j.clips].reverse().map(c => clipHtml(j, c)).join("")}</div>` : ""}`;
 }
+/* a video's clip section starts folded on every visit; the open/closed choice is kept in memory per view only, so it resets on reload and never leaks between tabs */
+const jobOpenState = {};
+function jobOpen(j) {
+  const k = (S.view || "library") + ":" + j.id;
+  return k in jobOpenState ? jobOpenState[k] : false;
+}
 function jobHtml(j) {
   if (j.status === "live") return liveHtml(j);
   const busy = ["queued", "running", "stopping"].includes(j.status);
+  const open = jobOpen(j);
   const who = !creatorId() && j.creator ? S.creators.find(c => c.id === j.creator)?.name : "";
   const meta = [who, j.uploader, j.duration ? fmt(j.duration) + " long" : "", j.clips.length ? j.clips.length + (j.clips.length === 1 ? " clip" : " clips") : "",
                 j.took ? "made in " + fmt(j.took) : "", j.kind === "live" ? "recording, " + j.stage.toLowerCase() : ""].filter(Boolean).map(esc).join(" · ");
   const pic = j.thumb ? `<img src="/media/${esc(j.id)}/thumb.jpg" alt="" loading="lazy">` : ic(j.source?.type === "file" ? "film" : "link");
-  return `<div class="job-head"><div class="jt"><span class="jthumb">${pic}${j.duration ? `<span class="du">${fmt(j.duration)}</span>` : ""}</span><div style="min-width:0"><h3>${esc(j.title || j.source.name)}</h3><p class="sub">${meta}</p></div></div>
-      <div class="row" style="flex-wrap:nowrap;gap:4px">${busy ? (j.kind === "video" && (j.status !== "stopping" || j.error) ? `<button class="btn sm danger" data-act="stopjob" data-j="${j.id}">${j.status === "stopping" ? "Retry stop" : "Stop"}</button>` : "") : `
+  return `<div class="job-head"><div class="jt" data-act="togglejob" data-j="${j.id}" role="button" tabindex="0" aria-expanded="${open}" aria-label="Show or hide the clips of this video"><span class="jthumb">${pic}${j.duration ? `<span class="du">${fmt(j.duration)}</span>` : ""}</span><div style="min-width:0"><h3>${esc(j.title || j.source.name)}</h3><p class="sub">${meta}</p></div></div>
+      <div class="row" style="flex-wrap:nowrap;gap:4px"><button class="btn sm icon ghost jchev" data-act="togglejob" data-j="${j.id}" title="${open ? "Hide clips" : "Show clips"}" aria-expanded="${open}" aria-label="${open ? "Hide clips of this video" : "Show clips of this video"}">${open ? "▴" : "▾"}</button>${busy ? (j.kind === "video" && (j.status !== "stopping" || j.error) ? `<button class="btn sm danger" data-act="stopjob" data-j="${j.id}">${j.status === "stopping" ? "Retry stop" : "Stop"}</button>` : "") : `
         ${j.clips.some(c => c.status === "done") ? `<button class="btn sm icon ghost" data-act="dlall" data-j="${j.id}" title="Download all clips of this video" aria-label="Download all clips of this video">${ic("down")}</button>` : ""}
-        ${j.clips.some(c => c.status === "error") ? `<button class="btn sm icon ghost" data-act="refailall" data-j="${j.id}" title="Re-process all failed clips" aria-label="Re-process all failed clips">${ic("refresh")}</button>` : ""}
+        <button class="btn sm icon ghost" data-act="refailall" data-j="${j.id}" title="Re-process clips" aria-label="Re-process clips of this video">${ic("refresh")}</button>
         <button class="btn sm icon ghost" data-act="deljob" data-j="${j.id}" title="Delete" aria-label="Delete this video and its clips">${ic("trash")}</button>
         <label class="selck" title="Select this video and its clips"><input type="checkbox" data-sel="j:${j.id}" ${sel().has("j:" + j.id) ? "checked" : ""} aria-label="Select this video"></label>`}</div></div>
+    <div class="job-body">
     ${busy ? `<div class="bar"><i style="width:${Math.round(j.progress * 100)}%"></i></div><p class="sub">${esc(j.stage)} · ${Math.round(j.progress * 100)}%</p>` : ""}
     ${(j.status === "done" && !j.clips.length) || j.status === "stopped" ? `<p class="sub">${esc(j.stage)}</p>` : ""}
     ${j.error ? `<div class="err">${esc(j.error)}<button class="rep" data-act="report" data-ctx="${esc("Video failed: " + (j.title || j.source.name || "") + " | " + j.error)}">Report this</button></div>` : ""}${j.ai?.note ? `<p class="sub">${esc(j.ai.note)}</p>` : ""}
-    ${j.clips.length ? `<div class="grid">${j.clips.map(c => clipHtml(j, c)).join("")}</div>` : ""}`;
+    ${j.clips.length ? `<div class="grid">${j.clips.map(c => clipHtml(j, c)).join("")}</div>` : ""}
+    </div>`;
 }
 /* ---- selecting several videos and clips: delete or download them together */
 const sel = () => (S.sel = S.sel || new Set());
@@ -1875,6 +1956,7 @@ function drawJobs() {
   list.forEach((j, i) => {
     let el = $(`section[data-job="${j.id}"]`, root);
     if (!el) { el = document.createElement("section"); el.className = "job"; el.dataset.job = j.id; }
+    el.classList.toggle("collapsed", !jobOpen(j));
     if (root.children[i] !== el) root.insertBefore(el, root.children[i] || null);
     put(el, jobHtml(j));
   });
@@ -2486,6 +2568,15 @@ document.addEventListener("click", async e => {
     if (a === "pickfile") return $("#file").click();
     if (a === "addmore") { const u = $("#url"); return u && !u.value ? (u.focus(), toast("Paste another link, or drop a file anywhere on the box.")) : $("#file").click(); }
     if (a === "closedlg") return $("#clipdlg").close();
+    if (a === "togglejob") {
+      const jobEl = b.closest(".job"); if (!jobEl) return;
+      const willOpen = jobEl.classList.contains("collapsed");
+      jobEl.classList.toggle("collapsed", !willOpen);
+      jobEl.querySelectorAll(".jchev").forEach(x => { x.textContent = willOpen ? "▴" : "▾"; x.setAttribute("aria-expanded", String(willOpen)); x.title = willOpen ? "Hide clips" : "Show clips"; });
+      const jt = jobEl.querySelector(".jt"); if (jt) jt.setAttribute("aria-expanded", String(willOpen));
+      jobOpenState[(S.view || "library") + ":" + d.j] = willOpen;
+      return;
+    }
     if (a === "openclip") return openClip(d.j, d.c);
     if (a === "newcreator") {
       const dlg = $("#formdlg");
@@ -2568,10 +2659,12 @@ document.addEventListener("click", async e => {
       await api(`/api/jobs/${d.j}`, {method:"DELETE"}); toast("Deleted"); return tick();
     }
     if (a === "refailall") {
-      const failed = jobOf(d.j).clips.filter(c => c.status === "error").length;
-      if (!await ask("Re-process " + failed + " failed clips?", "This will retry every clip that failed to make in this video.", "Re-process")) return;
-      await send(`/api/jobs/${d.j}/clips/re-render-all", {}, "POST");
-      toast("Re-processing " + failed + " failed clips.", "ok");
+      const j = jobOf(d.j); if (!j) return;
+      const r = await openRepro(j);
+      if (!r) return;
+      await send(`/api/jobs/${d.j}/clips/reprocess`, r, "POST");
+      const failed = j.clips.filter(c => c.status === "error").length;
+      toast(r.mode === "failed" ? `Re-processing ${failed} failed clip${failed === 1 ? "" : "s"}.` : `Re-processing all ${j.clips.length} clips.`, "ok");
       return tick();
     }
     if (a === "stopjob") {
